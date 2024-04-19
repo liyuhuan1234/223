@@ -1,9 +1,9 @@
-#include "selectServer.hpp"
+#include "pollServer.hpp"
 #include "err.hpp"
 #include <memory>
 
 using namespace std;
-using namespace select_ns;
+using namespace poll_ns;
 
 static void usage(std::string proc)
 {
@@ -24,7 +24,7 @@ int main(int argc,char *argv[])
     //     exit(USAGE_ERR);
     // }
     // unique_ptr<SelectServer> svr(new SelectServer(atoi(argv[1])));
-    unique_ptr<SelectServer> svr(new SelectServer(transaction));
+    unique_ptr<PollServer> svr(new PollServer(transaction));
 
     svr->initServer();
 

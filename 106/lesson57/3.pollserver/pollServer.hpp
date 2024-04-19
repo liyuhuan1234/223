@@ -3,20 +3,21 @@
 #include <iostream>
 #include <string>
 #include <functional>
+#include <poll.h>
 #include "sock.hpp"
 
-namespace select_ns
+namespace poll_ns
 {
     static const int defaultport=8080;
-    static const int fdnum=sizeof(fd_set)*8;
+    static const int num=2048;
     static const int defaultfd=-1;
 
     using func_t=std::function<std::string (const std::string&)>;
 
-    class SelectServer
+    class PollServer
     {
     public:
-        SelectServer(func_t f,int port=defaultport):func(f),_port(port),_listensock(-1),fdarray(nullptr)
+        PollServer(func_t f,int port=defaultport):_func(f),_port(port),_listensock(-1),_rfds(nullptr)
         {
         }
 
@@ -26,19 +27,31 @@ namespace select_ns
             Sock::Bind(_listensock,_port);
             Sock::Listen(_listensock);
 
-            fdarray=new int[fdnum];
-            for(int i=0;i<fdnum;i++) fdarray[i]=defaultfd;
-            fdarray[0]=_listensock;
+            _rfds=new struct pollfd[num];
+            for(int i=0;i<num;i++) 
+                ResetItem(i);
+
+            _rfds[0].fd=_listensock;
+            _rfds[0].events=POLLIN;
+
         }
 
         void Print()
         {
             std::cout<<"fd list: ";
-            for(int i=0;i<fdnum;i++)
+            for(int i=0;i<num;i++)
             {
-                if(fdarray[i]!=defaultfd) std::cout<<fdarray[i]<<" ";
+                if(_rfds[i].fd!=defaultfd) std::cout<<_rfds[i].fd<<" ";
             }
             std::cout<<std::endl;
+        }
+
+        
+        void ResetItem(int i)
+        {
+            _rfds[i].fd=defaultfd;
+            _rfds[i].events=0;
+            _rfds[i].revents=0;
         }
 
         void Accepter(int listensock)
@@ -53,30 +66,33 @@ namespace select_ns
 
             //将新的sock托管给select的本质，其实就是将sock添加到fdarray数组中
             int i=0;
-            for(;i<fdnum;i++)
+            for(;i<num;i++)
             {
-                if(fdarray[i]!=defaultfd) continue;
+                if(_rfds[i].fd!=defaultfd) continue;
                 else break;
             }
-            if(i==fdnum)
+            if(i==num)
             {
                 logMessage(WARNING,"server if full,please wait");
                 close(sock);
             }
             else
             {
-                fdarray[i]=sock;
+                _rfds[i].fd=sock;
+                _rfds[i].events=POLLIN;
+                _rfds[i].revents=0;
             }
             Print();
             logMessage(DEBUG,"Accepter out");
         }
 
-        void Recver(int sock,int pos)
+
+        void Recver(int pos)
         {
             logMessage(DEBUG,"in Recver");
             //1.读取request
             char buffer[1024];
-            ssize_t s=recv(sock,buffer,sizeof(buffer)-1,0);//这里在进行读取的时候，不会被阻塞
+            ssize_t s=recv(_rfds[pos].fd,buffer,sizeof(buffer)-1,0);//这里在进行读取的时候，不会被阻塞
             if(s>0)
             {
                 buffer[s]=0;
@@ -84,43 +100,44 @@ namespace select_ns
             }
             else if(s==0)
             {
-                close(sock);
-                fdarray[pos]=defaultfd;
+                close(_rfds[pos].fd);
+                ResetItem(pos);
                 logMessage(NORMAL,"client quit");
                 return;
             }
             else
             {
-                close(sock);
-                fdarray[pos]=defaultfd;
+                close(_rfds[pos].fd);
+                ResetItem(pos);
                 logMessage(ERROR,"client quit: %s",strerror(errno));
                 return;
             }
 
             //2.处理request
-            std::string response=func(buffer);
+            std::string response=_func(buffer);
 
 
             //3.返回
             //write
-            write(sock,response.c_str(),response.size());
+            write(_rfds[pos].fd,response.c_str(),response.size());
 
             logMessage(DEBUG,"out Recver");
         }
 
         //handler event rfds中，不仅仅是有一个fd是就绪的，可能存在多个
-        void HandlerReadEvent(fd_set &rfds)
+        void HandlerReadEvent()
         {
-            for(int i=0;i<fdnum;i++)
+            for(int i=0;i<num;i++)
             {
                 //过滤掉非法的fd
-                if(fdarray[i]==defaultfd) continue;
+                if(_rfds[i].fd==defaultfd) continue;
 
+                if(!_rfds[i].events & POLLIN) continue;
                 //目前一定是listensock
-                if(FD_ISSET(fdarray[i],&rfds) && fdarray[i]==_listensock) 
+                if(_rfds[i].fd==_listensock && (_rfds[i].revents & POLLIN)) 
                     Accepter(_listensock);
-                else if(FD_ISSET(fdarray[i],&rfds))
-                    Recver(fdarray[i],i);
+                else if(_rfds[i].revents & POLLIN)
+                    Recver(i);
                 else{}
             }
 
@@ -128,28 +145,10 @@ namespace select_ns
 
         void start()
         {
+            int timeout=1000;
             for(;;)
             {
-                fd_set rfds;
-                FD_ZERO(&rfds);
-                int maxfd=fdarray[0];
-
-                for(int i=0;i<fdnum;i++)
-                {
-                    if(fdarray[i]==defaultfd) 
-                        continue;
-                    FD_SET(_listensock,&rfds);//将合法fd全部添加到读文件描述符集中
-
-                    if(maxfd<fdarray[i])
-                        maxfd=fdarray[i];
-                }
-
-                logMessage(NORMAL,"max fd is: %d",maxfd);
-
-                struct timeval timeout={1,0};
-                //int n=select(_listensock+1,&rfds,nullptr,nullptr,&timeout);
-                //一般而言，要用select,需要程序员自己维护一个保存合法fd的数组
-                int n=select(maxfd+1,&rfds,nullptr,nullptr,nullptr);
+                int n=poll(_rfds,num,timeout);
                 switch(n)
                 {
                 case 0:
@@ -161,27 +160,23 @@ namespace select_ns
                 default:
                     //有事件就绪，目前只有一个监听事件
                     logMessage(NORMAL,"have event ready!");
-                    HandlerReadEvent(rfds);
+                    HandlerReadEvent();
                     //HandlerWriteEvent(rfds);
                     break;
                 }
-                // std::string clientip;
-                // uint16_t clientport=0;
-                // int sock=Sock::Accept(_listensock,&clientip,&clientport);
-                // if(sock<0) continue;
-                //开始服务器的处理逻辑
-
             }
         }
-        ~SelectServer()
+        ~PollServer()
         {
-            if(_listensock<0) close(_listensock);
-            if(fdarray) delete []fdarray;
+            if(_listensock<0) 
+                close(_listensock);
+            if(_rfds) 
+                delete []_rfds;
         }
     private:
         int _port;
         int _listensock;
-        int *fdarray;
-        func_t func;
+        struct pollfd *_rfds;
+        func_t _func;
     };
 }
