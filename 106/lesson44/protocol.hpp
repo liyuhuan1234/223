@@ -5,7 +5,7 @@
 #include <string>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <jsoncpp/json/json.h>
+#include "jsoncpp/include/json/json.h"
 
 
 
@@ -64,7 +64,7 @@ public:
         Json::Value root;
         root["first"]=x;
         root["second"]=y;
-        roo["oper"]=op;
+        root["oper"]=op;
 
         Json::FastWriter writer;
         //Json::StyleWriter writer;

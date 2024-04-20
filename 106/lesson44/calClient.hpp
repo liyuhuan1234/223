@@ -59,6 +59,7 @@ public:
                 std::string content;
                 req.serialize(&content);
                 std::string send_string=enLength(content);
+                std::cout<<"sendstring:\n"<<send_string<<std::endl;
                 send(_sock,send_string.c_str(),send_string.size(),0);
 
                 std::string package,text;
