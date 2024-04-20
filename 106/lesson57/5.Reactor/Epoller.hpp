@@ -38,6 +38,38 @@ public:
         int n=epoll_ctl(epfd_,EPOLL_CTL_ADD,sock,&ev);
         return n==0;
     }
+    //内核->用户
+    int Wait(struct epoll_event revs[],int num,int timeout)
+    {
+        int n=epoll_wait(epfd_,revs,num,timeout);
+        return n;
+    }
+
+    bool Control(int sock,uint32_t event,int action)
+    {
+        int n=0;
+        if(action==EPOLL_CTL_MOD)
+        {
+            struct epoll_event ev;
+            ev.events=event;
+            ev.data.fd=sock;
+
+            n=epoll_ctl(epfd_,action,sock,&ev);
+        }
+        else if(action==EPOLL_CTL_DEL)
+        {
+            n=epoll_ctl(epfd_,action,sock,nullptr);
+        }
+        else
+            n=-1;
+        return n==0;
+    }
+
+    void Close()
+    {
+        if(epfd_!=defaultepfd)
+            close(epfd_);
+    }
 private:
     int epfd_;
 

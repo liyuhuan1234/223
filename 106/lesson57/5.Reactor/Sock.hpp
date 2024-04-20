@@ -67,13 +67,14 @@ public:
         logMessage(NORMAL,"listen socket success");
     }
 
-    int Accept(std::string *clientip,uint16_t *clientport)
+    int Accept(std::string *clientip,uint16_t *clientport,int *err)
     {
         //4.server获取新链接
         //sock，和client进行通信的fd
         struct sockaddr_in peer;
         socklen_t len=sizeof(peer);
         int sock=accept(listensock_,(struct sockaddr*)&peer,&len);
+        *err=errno;
         if(sock<0)
         {
             logMessage(ERROR,"accept error,next");
@@ -89,6 +90,11 @@ public:
     int Fd()
     {
         return listensock_;
+    }
+    void Close()
+    {
+        if(listensock_!=defaultsock)
+            close(listensock_);
     }
 private:
     int listensock_;
